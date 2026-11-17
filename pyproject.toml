@@ -1,0 +1,28 @@
+[project]
+name = "snakewatchers"
+version = "0.0.0"
+description = "Rules for asp: thumbnails first."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "asp",
+    "pillow>=11",
+]
+
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/snakewatchers"]
+
+[tool.uv.sources]
+asp = { git = "https://github.com/k0s/asp" }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
