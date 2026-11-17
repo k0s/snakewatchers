@@ -14,6 +14,7 @@ The rule applies in every root. asp never runs a handler on its own outputs,
 so thumbnails are not thumbnailed.
 """
 
+from pathlib import Path
 from typing import BinaryIO
 
 from asp import Event, rule
@@ -32,45 +33,60 @@ MATCH = "**/*.{" + ",".join(
 OUTPUT = "{dir}/thumbs/thumb_{name}"
 
 
-def box(wanted: Thumbnails, scale: int) -> tuple[int, int]:
-    """The size thumbnails must fit: the size the directory displays them at,
-    times `scale`. A side it does not state is left loose."""
-    if wanted.width is None and wanted.height is None:
-        return WIDTH * scale, HEIGHT * scale
-    return ((wanted.width or 10 * (wanted.height or WIDTH)) * scale,
-            (wanted.height or 10 * (wanted.width or WIDTH)) * scale)
+def target(size: tuple[int, int], wanted: Thumbnails, scale: int) -> tuple[int, int]:
+    """The size a thumbnail of an image of `size` should be.
 
-
-def fitted(size: tuple[int, int], within: tuple[int, int]) -> tuple[int, int]:
-    """`size` scaled down to fit `within`, keeping its shape; never up."""
-    ratio = min(within[0] / size[0], within[1] / size[1], 1.0)
+    A directory that states both a width and a height shows every thumbnail
+    at exactly that size, so the thumbnail is exactly that size (cropped to
+    fill it). One that states a single side, or neither, gets the image
+    scaled to that side, keeping its shape. Nothing is enlarged.
+    """
+    if wanted.width and wanted.height:
+        return wanted.width * scale, wanted.height * scale
+    if wanted.height:
+        ratio = min(wanted.height * scale / size[1], 1.0)
+    else:
+        ratio = min((wanted.width or WIDTH) * scale / size[0], HEIGHT * scale / size[1], 1.0)
     return max(1, round(size[0] * ratio)), max(1, round(size[1] * ratio))
 
 
-def already_made(event: Event, within: tuple[int, int]) -> bool:
-    """Whether a good thumbnail is already there: newer than its image, and
-    the size this rule would make. Then it is left untouched, so thumbnails
-    from before asp are kept and a re-run rewrites nothing."""
-    existing = event.path.parent / "thumbs" / f"thumb_{event.path.name}"
+def good_enough(have: tuple[int, int], want: tuple[int, int]) -> bool:
+    """Whether an existing thumbnail of size `have` will do where `want` is
+    wanted: the same shape, and from the wanted size up to twice it. A
+    thumbnail someone made a little larger is not worth replacing; one that is
+    the wrong shape (cropped differently, or lying on its side) is."""
+    same_shape = abs(have[0] * want[1] - have[1] * want[0]) <= 0.03 * have[0] * want[1] + want[1]
+    return (same_shape and want[0] - 1 <= have[0] <= 2 * want[0] + 1
+            and want[1] - 1 <= have[1] <= 2 * want[1] + 1)
+
+
+def already_made(source: Path, wanted: Thumbnails, scale: int) -> bool:
+    """Whether a good thumbnail is already there: newer than its image and
+    good enough. Then it is left untouched, so thumbnails from before asp are
+    kept and a re-run rewrites nothing."""
+    existing = source.parent / "thumbs" / f"thumb_{source.name}"
     try:
-        if existing.stat().st_mtime < event.path.stat().st_mtime or not existing.stat().st_size:
+        if existing.stat().st_mtime < source.stat().st_mtime or not existing.stat().st_size:
             return False
-        with Image.open(existing) as thumb, Image.open(event.path) as image:
-            source = ImageOps.exif_transpose(image).size
-            want = fitted(source, within)
-            # Resizers round differently; a pixel either way is the same thumbnail.
-            return all(abs(have - wanted) <= 1 for have, wanted in zip(thumb.size, want))
+        with Image.open(existing) as thumb, Image.open(source) as image:
+            return good_enough(thumb.size,
+                               target(ImageOps.exif_transpose(image).size, wanted, scale))
     except (OSError, ValueError):
         return False
 
 
-def make_thumbnail(source, out: BinaryIO, format: str, within: tuple[int, int]) -> None:
-    """Write `source`, scaled to fit `within`, to `out`. An image that
-    already fits is re-encoded at its own size, never enlarged."""
+def make_thumbnail(source, out: BinaryIO, format: str, wanted: Thumbnails,
+                   scale: int = 1) -> None:
+    """Write a thumbnail of `source` to `out`, sized by `target`."""
     with Image.open(source) as image:
         image.seek(0)                               # an animation's first frame
         image = ImageOps.exif_transpose(image)      # the pixels, the right way up
-        image.thumbnail(within, Image.Resampling.LANCZOS)
+        size = target(image.size, wanted, scale)
+        if wanted.width and wanted.height:
+            # Fill the box exactly, cropping the overflow evenly from both sides.
+            image = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
+        else:
+            image = image.resize(size, Image.Resampling.LANCZOS)
         if format == "JPEG":
             if image.mode not in ("RGB", "L"):
                 image = image.convert("RGB")
@@ -90,8 +106,7 @@ def thumbnail(event: Event, out: BinaryIO | None, scale: int) -> BinaryIO | None
         # Not asked for; or asked for somewhere this rule's fixed output
         # pattern can't put them.
         return None
-    within = box(wanted, scale)
-    if already_made(event, within):
+    if already_made(event.path, wanted, scale):
         return None
-    make_thumbnail(event.path, out, FORMATS[event.path.suffix.lower()], within)
+    make_thumbnail(event.path, out, FORMATS[event.path.suffix.lower()], wanted, scale)
     return out
