@@ -30,12 +30,15 @@ in `index.json`, or `/images = thumbnails, size=150x` in an `index.ini`. Where a
 directory has both, `index.json` counts. The request is not inherited by
 subdirectories.
 
-- **Size.** Thumbnails fit the `width` and `height` the directory shows them at
-  (150 wide if it states neither), keep their shape and their format, and are
-  never larger than the original.
-- **Existing thumbnails are kept** when they are newer than their image and
-  already the right size, so thumbnails made by something else survive, and a
-  re-run rewrites nothing. Otherwise the thumbnail is replaced.
+- **Size.** A directory that states one side (`"width": 150`) gets thumbnails
+  scaled to it, keeping their shape; 150 wide if it states nothing. One that
+  states both (`"width": 160, "height": 160`) shows every thumbnail at exactly
+  that size, so each is cropped from the middle to fill it. Thumbnails keep
+  their format and are never larger than the original, except to fill a box.
+- **Existing thumbnails are kept** when they are newer than their image, the
+  right shape, and between the wanted size and twice it. So thumbnails made by
+  something else survive, and a re-run rewrites nothing. One that is older than
+  its image, the wrong shape, or the wrong size is replaced.
 - Matches `.jpg`, `.jpeg`, `.png`, `.gif` and `.webp`, in lower or upper case.
 - EXIF orientation is applied, so phone photos come out the right way up.
 - An animated image yields its first frame.

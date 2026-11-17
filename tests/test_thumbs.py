@@ -71,11 +71,11 @@ def test_thumbnails_are_the_size_the_directory_shows_them(site: Path) -> None:
 
 
 @pytest.mark.parametrize("images, expected", [
-    ({"width": 160, "height": 160}, (160, 107)),
+    ({"width": 160, "height": 160}, (160, 160)),    # both stated: exactly that, cropped
     ({"height": 100}, (150, 100)),
     ({}, (150, 100)),
 ])
-def test_stated_sizes_are_a_box_to_fit(tmp_path: Path, images, expected) -> None:
+def test_stated_sizes(tmp_path: Path, images, expected) -> None:
     site = tmp_path / "site"
     ask(site, **images)
     picture(site / "wide.jpg", (1200, 800))
@@ -83,6 +83,21 @@ def test_stated_sizes_are_a_box_to_fit(tmp_path: Path, images, expected) -> None
         "roots": {"site": "site"}, "watchers": ["snakewatchers.thumbs"]}))
     Engine.from_config(tmp_path / "asp.json", {}).run_once()
     assert size_of(site / "thumbs/thumb_wide.jpg") == expected
+
+
+def test_a_box_is_filled_by_cropping_the_middle(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    ask(site, width=100, height=100)
+    image = Image.new("RGB", (300, 100), "red")
+    image.paste("blue", (100, 0, 200, 100))         # the middle third
+    image.save(site / "stripes.png")
+    (tmp_path / "asp.json").write_text(json.dumps({
+        "roots": {"site": "site"}, "watchers": ["snakewatchers.thumbs"]}))
+    Engine.from_config(tmp_path / "asp.json", {}).run_once()
+    with Image.open(site / "thumbs/thumb_stripes.png") as thumb:
+        assert thumb.size == (100, 100)
+        assert thumb.convert("RGB").getpixel((50, 50)) == (0, 0, 255)
+        assert thumb.convert("RGB").getpixel((2, 50)) == (0, 0, 255)
 
 
 def test_small_images_are_not_enlarged(site: Path) -> None:
@@ -157,10 +172,32 @@ def test_one_pixel_of_rounding_is_still_a_good_thumbnail(site: Path) -> None:
     assert thumb.read_bytes() == before
 
 
-def test_a_wrong_sized_existing_thumbnail_is_replaced(site: Path) -> None:
-    thumb = earlier_thumbnail(site, "wide.jpg", (90, 60))
+def test_a_somewhat_larger_existing_thumbnail_is_kept(site: Path) -> None:
+    thumb = earlier_thumbnail(site, "wide.jpg", (160, 107))
+    before = thumb.read_bytes()
+    run(site)
+    assert thumb.read_bytes() == before
+
+
+@pytest.mark.parametrize("size", [(90, 60), (400, 267), (150, 150), (100, 150)])
+def test_a_wrong_sized_or_wrong_shaped_existing_thumbnail_is_replaced(site: Path, size) -> None:
+    thumb = earlier_thumbnail(site, "wide.jpg", size)
     run(site)
     assert size_of(thumb) == (150, 100)
+
+
+def test_an_existing_cropped_thumbnail_is_kept_where_a_box_is_asked_for(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    ask(site, width=160, height=160)
+    picture(site / "wide.jpg", (1200, 800))
+    thumb = site / "thumbs/thumb_wide.jpg"
+    picture(thumb, (160, 160))
+    os.utime(thumb, (2_000_000_000, 2_000_000_000))
+    before = thumb.read_bytes()
+    (tmp_path / "asp.json").write_text(json.dumps({
+        "roots": {"site": "site"}, "watchers": ["snakewatchers.thumbs"]}))
+    Engine.from_config(tmp_path / "asp.json", {}).run_once()
+    assert thumb.read_bytes() == before
 
 
 def test_a_thumbnail_older_than_its_image_is_replaced(site: Path) -> None:
